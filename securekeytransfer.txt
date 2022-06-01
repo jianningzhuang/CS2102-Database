@@ -1,0 +1,364 @@
+#include "integer.h"
+#include "eccrypto.h"
+#include "osrng.h"
+#include "oids.h"
+#include "cryptlib.h"
+#include "sha.h"
+#include "hex.h"
+#include "files.h"
+#include "hmac.h"
+
+#include <iostream>
+#include <iomanip>
+
+int main(int argc, char* argv[])
+{
+    using namespace CryptoPP;
+    typedef DL_GroupParameters_EC<ECP> GroupParameters;
+    typedef DL_GroupParameters_EC<ECP>::Element Element;
+
+    /* SETUP
+    * Define elliptic curve ASN1::secp256r1()
+    * Generate private and public key for ECUi and ECUj
+    * Choose hash function
+    */
+
+    AutoSeededRandomPool prng;
+    GroupParameters group;
+    group.Initialize(ASN1::secp256r1());
+    SHA256 hash;
+    std::cout << "Name: " << hash.AlgorithmName() << std::endl;
+    std::cout << "Digest size: " << hash.DigestSize() << std::endl;
+    std::cout << "Block size: " << hash.BlockSize() << std::endl;
+
+    HexEncoder encoder(new FileSink(std::cout));
+    std::string digest;
+    std::string msg = IntToString(17);
+    hash.Update((const byte*)msg.data(), msg.size());
+    digest.resize(hash.DigestSize());
+    hash.Final((byte*)&digest[0]);
+
+    //std::cout << "Message: " << msg << std::endl;
+
+    //std::cout << "Digest: ";
+    //StringSource(digest, true, new Redirector(encoder));
+    //std::cout << std::endl;
+
+    std::cout << " " << std::endl;
+    std::cout << "SETUP" << std::endl;
+    std::cout << " " << std::endl;
+    // private key ECUi
+    Integer di(prng, Integer::One(), group.GetMaxExponent());
+
+    std::cout << "Private exponent ECUi:" << std::endl;
+    std::cout << "  " << std::hex << di << std::endl;
+
+    // public key ECUi
+    Element Ui = group.ExponentiateBase(di);
+
+    std::cout << "Public element ECUi:" << std::endl;
+    std::cout << "  " << std::hex << Ui.x << std::endl;
+    std::cout << "  " << std::hex << Ui.y << std::endl;
+
+    // private key ECUj
+    Integer dj(prng, Integer::One(), group.GetMaxExponent());
+
+    std::cout << "Private exponent ECUj:" << std::endl;
+    std::cout << "  " << std::hex << dj << std::endl;
+
+    // public key ECUj
+    Element Uj = group.ExponentiateBase(dj);
+
+    std::cout << "Public element ECUj:" << std::endl;
+    std::cout << "  " << std::hex << Uj.x << std::endl;
+    std::cout << "  " << std::hex << Uj.y << std::endl;
+
+    /* STEP1
+    * choose ri in field
+    * calculate Ri
+    * generate AUTHi
+    * ECUi send authentication message to ECUj
+    */
+
+    std::cout << " " << std::endl;
+    std::cout << "STEP1" << std::endl;
+    std::cout << " " << std::endl;
+
+    // ri
+    Integer ri(prng, Integer::One(), group.GetMaxExponent());
+
+    std::cout << "Private exponent ri:" << std::endl;
+    std::cout << "  " << std::hex << ri << std::endl;
+
+    // Ri
+    Element Ri = group.GetCurve().ScalarMultiply(Ui, ri);
+
+    std::cout << "Public element Ri:" << std::endl;
+    std::cout << "  " << std::hex << Ri.x << std::endl;
+    std::cout << "  " << std::hex << Ri.y << std::endl;
+    std::cout << "  " << IntToString(Ri.x) << std::endl;
+
+    //di x Uj
+
+    Element diUj = group.GetCurve().ScalarMultiply(Uj, di);
+    std::cout << "di x Uj:" << std::endl;
+    std::cout << "  " << std::hex << diUj.x << std::endl;
+    std::cout << "  " << std::hex << diUj.y << std::endl;
+    std::cout << "  " << IntToString(diUj.x) << std::endl;
+
+    //AUTHi
+
+    std::string AUTHi;
+    std::string authmsgECUi = IntToString(1) + IntToString(Ri.x) + IntToString(diUj.x);
+    hash.Update((const byte*)authmsgECUi.data(), authmsgECUi.size());
+    AUTHi.resize(hash.DigestSize());
+    hash.Final((byte*)&AUTHi[0]);
+
+    std::cout << "authmsgECUi: " << std::endl;
+    std::cout << authmsgECUi << std::endl;
+
+    std::cout << " " << std::endl;
+
+    std::cout << "AUTHi: ";
+    StringSource(AUTHi, true, new Redirector(encoder));
+    std::cout << std::endl;
+
+    /*STEP2
+    * ECUj calculates AUTHi'
+    * compare AUTHi with AUTHi'
+    * choose rj in field
+    * compute Kj
+    */
+
+    std::cout << " " << std::endl;
+    std::cout << "STEP2" << std::endl;
+    std::cout << " " << std::endl;
+
+    //dj x Ui
+
+    Element djUi = group.GetCurve().ScalarMultiply(Ui, dj);
+    std::cout << "dj x Ui:" << std::endl;
+    std::cout << "  " << std::hex << djUi.x << std::endl;
+    std::cout << "  " << std::hex << djUi.y << std::endl;
+    std::cout << "  " << IntToString(djUi.x) << std::endl;
+
+    //AUTHi'
+
+    std::string AUTHiprime;
+    std::string authmsgECUiprime = IntToString(1) + IntToString(Ri.x) + IntToString(djUi.x);
+    hash.Update((const byte*)authmsgECUiprime.data(), authmsgECUiprime.size());
+    AUTHiprime.resize(hash.DigestSize());
+    hash.Final((byte*)&AUTHiprime[0]);
+
+    std::cout << "authmsgECUi': " << std::endl;
+    std::cout << authmsgECUiprime << std::endl;
+
+    std::cout << " " << std::endl;
+
+    std::cout << "AUTHi': ";
+    StringSource(AUTHiprime, true, new Redirector(encoder));
+    std::cout << std::endl;
+
+    // rj
+    Integer rj(prng, Integer::One(), group.GetMaxExponent());
+
+    std::cout << "Private exponent rj:" << std::endl;
+    std::cout << "  " << std::hex << rj << std::endl;
+
+
+    //Kj
+
+    Element rjRi = group.GetCurve().ScalarMultiply(Ri, rj);
+    Element Kj = group.GetCurve().ScalarMultiply(rjRi, dj);
+    std::cout << "Kj:" << std::endl;
+    std::cout << "  " << std::hex << Kj.x << std::endl;
+    std::cout << "  " << std::hex << Kj.y << std::endl;
+    std::cout << "  " << IntToString(Kj.x) << std::endl;
+
+    /* STEP3
+    * ECUj calculates Rj
+    * ECUj calculates AUTHj
+    * ECUj calculates session key
+    * ECUj send authentication message to ECUi
+    */
+
+    std::cout << " " << std::endl;
+    std::cout << "STEP3" << std::endl;
+    std::cout << " " << std::endl;
+
+    // Rj
+    Element Rj = group.GetCurve().ScalarMultiply(Uj, rj);
+
+    std::cout << "Public element Rj:" << std::endl;
+    std::cout << "  " << std::hex << Rj.x << std::endl;
+    std::cout << "  " << std::hex << Rj.y << std::endl;
+    std::cout << "  " << IntToString(Rj.x) << std::endl;
+
+    //AUTHj
+
+    std::string AUTHj;
+    std::string authmsgECUj = IntToString(2) + IntToString(Rj.x) + IntToString(djUi.x);
+    hash.Update((const byte*)authmsgECUj.data(), authmsgECUj.size());
+    AUTHj.resize(hash.DigestSize());
+    hash.Final((byte*)&AUTHj[0]);
+
+    std::cout << "authmsgECUj: " << std::endl;
+    std::cout << authmsgECUj << std::endl;
+
+    std::cout << " " << std::endl;
+
+    std::cout << "AUTHj: ";
+    StringSource(AUTHj, true, new Redirector(encoder));
+    std::cout << std::endl;
+
+    //KSij
+
+    std::string KSij;
+    std::string allj = IntToString(1) + IntToString(2) + IntToString(Ri.x) + IntToString(Rj.x) + "AUTHiAUTHj" + IntToString(Kj.x);
+    hash.Update((const byte*)allj.data(), allj.size());
+    KSij.resize(hash.DigestSize());
+    hash.Final((byte*)&KSij[0]);
+
+    std::cout << "allj: " << std::endl;
+    std::cout << allj << std::endl;
+
+    std::cout << " " << std::endl;
+
+    std::cout << "KSij: ";
+    StringSource(KSij, true, new Redirector(encoder));
+    std::cout << std::endl;
+
+    /*STEP4
+    * ECUi calculate AUTHj'
+    * ECUi calculate Ki
+    * ECUi calculate KSij
+    * compare
+    */
+
+    std::cout << " " << std::endl;
+    std::cout << "STEP4" << std::endl;
+    std::cout << " " << std::endl;
+
+    //AUTHj'
+
+    std::string AUTHjprime;
+    std::string authmsgECUjprime = IntToString(2) + IntToString(Rj.x) + IntToString(diUj.x);
+    hash.Update((const byte*)authmsgECUjprime.data(), authmsgECUjprime.size());
+    AUTHjprime.resize(hash.DigestSize());
+    hash.Final((byte*)&AUTHjprime[0]);
+
+    std::cout << "authmsgECUj': " << std::endl;
+    std::cout << authmsgECUjprime << std::endl;
+
+    std::cout << " " << std::endl;
+
+    std::cout << "AUTHj': ";
+    StringSource(AUTHjprime, true, new Redirector(encoder));
+    std::cout << std::endl;
+
+    //Kj
+
+    Element riRj = group.GetCurve().ScalarMultiply(Rj, ri);
+    Element Ki = group.GetCurve().ScalarMultiply(riRj, di);
+    std::cout << "Ki:" << std::endl;
+    std::cout << "  " << std::hex << Ki.x << std::endl;
+    std::cout << "  " << std::hex << Ki.y << std::endl;
+    std::cout << "  " << IntToString(Ki.x) << std::endl;
+
+    //KSij'
+
+    std::string KSijprime;
+    std::string alli = IntToString(1) + IntToString(2) + IntToString(Ri.x) + IntToString(Rj.x) + "AUTHiAUTHj" + IntToString(Ki.x);
+    hash.Update((const byte*)alli.data(), alli.size());
+    KSijprime.resize(hash.DigestSize());
+    hash.Final((byte*)&KSijprime[0]);
+
+    std::cout << "alli: " << std::endl;
+    std::cout << alli << std::endl;
+
+    std::cout << " " << std::endl;
+
+    std::cout << "KSij': ";
+    StringSource(KSijprime, true, new Redirector(encoder));
+    std::cout << std::endl;
+
+    std::cout << " " << std::endl;
+    std::cout << " " << std::endl;
+    std::cout << " " << std::endl;
+
+    /* HMAC
+    * 
+    */
+    SecByteBlock key((const byte*)KSij.data(), KSij.size());
+    //SecByteBlock key(32);
+    //prng.GenerateBlock(key, key.size());
+
+    std::string plain = "Jianning says hi!";
+    std::string mac, encoded;
+
+    /*********************************\
+    \*********************************/
+
+    // Pretty print key
+    encoded.clear();
+    StringSource ss1(key, key.size(), true,
+        new HexEncoder(
+            new StringSink(encoded)
+        ) // HexEncoder
+    ); // StringSource
+
+    std::cout << "key: " << encoded << std::endl;
+    std::cout << "plain text: " << plain << std::endl;
+
+    /*********************************\
+    \*********************************/
+
+    try
+    {
+        HMAC< SHA256 > hmac(key, key.size());
+
+        StringSource ss2(plain, true,
+            new HashFilter(hmac,
+                new StringSink(mac)
+            ) // HashFilter      
+        ); // StringSource
+    }
+    catch (const CryptoPP::Exception& e)
+    {
+        std::cerr << e.what() << std::endl;
+        exit(1);
+    }
+
+    /*********************************\
+    \*********************************/
+
+    // Pretty print
+    encoded.clear();
+    StringSource ss3(mac, true,
+        new HexEncoder(
+            new StringSink(encoded)
+        ) // HexEncoder
+    ); // StringSource
+
+    std::cout << "hmac: " << encoded << std::endl;
+
+    std::cout << " " << std::endl;
+    std::cout << " " << std::endl;
+    std::cout << " " << std::endl;
+
+    // element addition
+    Element u = group.GetCurve().Add(Ui, ECP::Point(2, 3));
+
+    std::cout << "Add:" << std::endl;
+    std::cout << "  " << std::hex << u.x << std::endl;
+    std::cout << "  " << std::hex << u.y << std::endl;
+
+    // scalar multiplication
+    Element v = group.GetCurve().ScalarMultiply(u, Integer::Two());
+
+    std::cout << "Mult:" << std::endl;
+    std::cout << "  " << std::hex << v.x << std::endl;
+    std::cout << "  " << std::hex << v.y << std::endl;
+
+    return 0;
+}
