@@ -1,0 +1,276 @@
+#include "integer.h"
+#include "eccrypto.h"
+#include "osrng.h"
+#include "oids.h"
+#include "cryptlib.h"
+#include "sha.h"
+#include "hex.h"
+#include "files.h"
+#include "hmac.h"
+
+#include <iostream>
+#include <iomanip>
+
+using namespace CryptoPP;
+using namespace std;
+
+AutoSeededRandomPool prng;
+
+int CTR;
+byte SSKsk[SHA256::DIGESTSIZE];
+string ssksk;
+
+/*
+* Long term shared secret key SKs
+*/
+
+SecByteBlock generate_long_term_secret(void) {
+
+    SecByteBlock SKs(32);
+    prng.GenerateBlock(SKs, SKs.size());
+
+    cout << "Long term shared secret key SKs generated!" << endl;
+
+    string long_term_secret_key;
+
+    HexEncoder hex(new StringSink(long_term_secret_key));
+    hex.Put(SKs, SKs.size());
+    hex.MessageEnd();
+    cout << long_term_secret_key << endl;
+    return SKs;
+
+}
+
+string generate_random_seed(void) {
+    SecByteBlock SEED0(4);
+    prng.GenerateBlock(SEED0, SEED0.size());
+
+    cout << "32 bit SEED0 generated!" << endl;
+
+    string seed0;
+
+    HexEncoder hex(new StringSink(seed0));
+    hex.Put(SEED0, SEED0.size());
+    hex.MessageEnd();
+    cout << seed0 << endl;
+    return seed0;
+}
+
+string compute_mac_secbyte(SecByteBlock secret_key, string message) {
+
+    string MAC, mac;
+
+    try
+    {
+        HMAC< SHA256 > hmac(secret_key, secret_key.size());
+
+        StringSource ss(message, true,
+                         new HashFilter(hmac,
+                                        new StringSink(MAC)
+                         ) // HashFilter
+        ); // StringSource
+    }
+    catch (const CryptoPP::Exception& e)
+    {
+        std::cerr << e.what() << std::endl;
+        exit(1);
+    }
+
+    mac.clear();
+    StringSource ss(MAC, true,
+                     new HexEncoder(
+                             new StringSink(mac)
+                     ) // HexEncoder
+    ); // StringSource
+
+    string truncated_mac = mac.substr(0,8);
+
+    std::cout << "MAC1: " << mac << std::endl;
+    std::cout << "32 bit truncated MAC1: " << truncated_mac << std::endl;
+    return truncated_mac;
+}
+
+string compute_mac_byte(byte* secret_key, string message) {
+
+    string MAC, mac;
+
+    try
+    {
+        HMAC< SHA256 > hmac(secret_key, sizeof(secret_key));
+
+        StringSource ss(message, true,
+                        new HashFilter(hmac,
+                                       new StringSink(MAC)
+                        ) // HashFilter
+        ); // StringSource
+    }
+    catch (const CryptoPP::Exception& e)
+    {
+        std::cerr << e.what() << std::endl;
+        exit(1);
+    }
+
+    mac.clear();
+    StringSource ss(MAC, true,
+                     new HexEncoder(
+                             new StringSink(mac)
+                     ) // HexEncoder
+    ); // StringSource
+
+    string truncated_mac = mac.substr(0,8);
+
+    std::cout << "MACr: " << mac << std::endl;
+    std::cout << "32 bit truncated MACr: " << truncated_mac << std::endl;
+    return truncated_mac;
+}
+
+string initialise_session_key(SecByteBlock SKs, string seed0, byte* SSKs0) {
+    CTR = 0;
+    cout << "Initialising Session Key..." << endl;
+    cout << "CTR value = " << CTR << endl;
+
+    byte salt[] = "salt";
+    size_t slen = strlen((const char*)salt);
+
+
+    string seed_counter = seed0 + to_string(CTR);
+    byte info[seed_counter.length()];
+    memcpy(info, seed_counter.data(), seed_counter.length());
+    size_t ilen = strlen((const char*)info);
+
+
+    HKDF<SHA256> hkdf;
+    hkdf.DeriveKey(SSKs0, sizeof(SSKs0), SKs, sizeof(SKs), salt, slen, info, ilen);
+
+    std::string ssks0;
+    HexEncoder encoder(new StringSink(ssks0));
+
+    encoder.Put(SSKs0, sizeof(SSKs0));
+    encoder.MessageEnd();
+
+    std::cout << "Initial Session Key SSKs0: " << ssks0 << std::endl;
+    return ssks0;
+
+
+}
+
+string next_session_key(SecByteBlock SKs, byte* SSKsk) {
+    CTR++;
+    cout << "Current Session number is: " << CTR << endl;
+
+    string ssksk;
+    HexEncoder encoder(new StringSink(ssksk));
+
+    encoder.Put(SSKsk, sizeof(SSKsk));
+    encoder.MessageEnd();
+
+    string sessionkey_counter = ssksk + to_string(CTR);
+    byte info[sessionkey_counter.length()];
+    memcpy(info, sessionkey_counter.data(), sessionkey_counter.length());
+    size_t ilen = strlen((const char*)info);
+    byte salt[] = "salt";
+    size_t slen = strlen((const char*)salt);
+
+
+    HKDF<SHA256> hkdf;
+    hkdf.DeriveKey(SSKsk, sizeof(SSKsk), SKs, sizeof(SKs), salt, slen, info, ilen);
+
+    HexEncoder encoder1(new StringSink(ssksk));
+
+    encoder1.Put(SSKsk, sizeof(SSKsk));
+    encoder1.MessageEnd();
+
+    std::cout << "Updated Session Key SSKsk: " << ssksk << std::endl;
+    return ssksk;
+
+}
+
+string compute_preauthcode (byte* SSKsk) {
+    string AUTHskj, authskj;
+
+    try
+    {
+        HMAC< SHA256 > hmac(SSKsk, sizeof(SSKsk));
+
+        StringSource ss(to_string(CTR), true,
+                         new HashFilter(hmac,
+                                        new StringSink(AUTHskj)
+                         ) // HashFilter
+        ); // StringSource
+    }
+    catch (const CryptoPP::Exception& e)
+    {
+        std::cerr << e.what() << std::endl;
+        exit(1);
+    }
+
+    authskj.clear();
+    StringSource ss8(AUTHskj, true,
+                     new HexEncoder(
+                             new StringSink(authskj)
+                     ) // HexEncoder
+    ); // StringSource
+
+    string truncated_authskj = authskj.substr(0,8);
+
+    std::cout << "AUTHskj: " << authskj << std::endl;
+    std::cout << "32 bit truncated AUTHskj: " << truncated_authskj << std::endl;
+    return truncated_authskj;
+}
+
+int main(int argc, char* argv[])
+{
+    /*
+    * Long term shared secret key SKs
+    */
+
+    SecByteBlock SKs = generate_long_term_secret();
+
+    /*
+     * STEP 1: Initial Session Key Derivation
+     * initialise counter CTR
+     * generate SEED0
+     * compute MAC1 for SEED0
+     * compute initial session key SSKs0
+     */
+
+    string seed0 = generate_random_seed();
+    string MAC1_truncated = compute_mac_secbyte(SKs, seed0);
+    ssksk = initialise_session_key(SKs, seed0, SSKsk);
+
+
+
+/*********************************\
+\*********************************/
+
+    /*
+     * STEP 2: Session Key Update
+     * compute MACr
+     * compute SSKsk
+     */
+
+    string MACr_truncated = compute_mac_byte(SSKsk, seed0);
+
+    string input;
+    while (input != "q") {
+        cout << "Type in your next message:" << endl;
+        getline(cin, input);
+        ssksk = next_session_key(SKs, SSKsk);
+        string truncated_authskj = compute_preauthcode(SSKsk);
+    }
+    cout << "Session ended! Bye Bye" << endl;
+
+
+
+
+
+/*********************************\
+\*********************************/
+
+    /*
+     * STEP 3: PreAuthCode
+     */
+
+    //string truncated_authskj = compute_preauthcode(SSKsk);
+
+}
